@@ -1,0 +1,34 @@
+name: 🐞 Баг
+description: Сообщить об ошибке
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: Описание
+      description: Что произошло и что ожидалось?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Логи
+      description: Релевантные строки логов (БЕЗ токенов и ключей!)
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: Версия / коммит
+  - type: input
+    id: python
+    attributes:
+      label: Версия Python / способ запуска (Docker?)

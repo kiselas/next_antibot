@@ -1,0 +1,21 @@
+name: 💡 Предложение
+description: Предложить улучшение или новую возможность
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую задачу решаем
+      description: Какая проблема или сценарий стоит за предложением?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Предлагаемое решение
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативы
