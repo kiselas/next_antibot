@@ -39,6 +39,19 @@ New behaviour and bug fixes should come with tests in `tests/`. The suite is at
 - Avoid heavy dependencies.
 - Secrets only via `.env`; never commit real tokens/keys.
 
+## Database migrations
+
+The SQLite schema is managed by Alembic (`antispam_bot/migrations`). After changing
+the schema, create a migration and keep it hand-written and minimal:
+
+```bash
+DB_PATH=./data/bot.db alembic revision -m "describe change"
+# edit the generated file under antispam_bot/migrations/versions/, then:
+DB_PATH=./data/bot.db alembic upgrade head
+```
+
+Migrations are applied automatically when the bot starts.
+
 ## Adding a classifier backend
 
 1. Implement `Classifier` in `antispam_bot/classifiers/your_backend.py`.

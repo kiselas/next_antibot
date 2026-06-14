@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -19,6 +20,7 @@ from antispam_bot.classifiers.base import (  # noqa: E402
 )
 from antispam_bot.config import Config  # noqa: E402
 from antispam_bot.core import Core  # noqa: E402
+from antispam_bot.db import run_migrations  # noqa: E402
 from antispam_bot.platform import (  # noqa: E402
     BotMembership,
     BotPlatform,
@@ -97,9 +99,19 @@ def config():
     return Config(_env_file=None)
 
 
+@pytest.fixture(scope="session")
+def _migrated_template(tmp_path_factory):
+    """Run migrations once per session; tests copy this DB (fast + real schema)."""
+    path = tmp_path_factory.mktemp("tmpl") / "tmpl.db"
+    run_migrations(str(path))
+    return str(path)
+
+
 @pytest.fixture
-async def storage(tmp_path):
-    st = Storage(str(tmp_path / "t.db"))
+async def storage(tmp_path, _migrated_template):
+    dbp = tmp_path / "t.db"
+    shutil.copyfile(_migrated_template, str(dbp))
+    st = Storage(str(dbp))
     await st.connect()
     yield st
     await st.close()

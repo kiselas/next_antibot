@@ -19,7 +19,8 @@ _CATALOG: dict[str, dict[str, str]] = {
             "/recent [N] — last N actions (default 10)\n"
             "/test <text> — run the classifier with no side effects\n"
             "/config — current parameters\n"
-            "/set <key> <value> — change a parameter\n"
+            "/set <key> <value> — change a global parameter\n"
+            "/setchat <chat_id> <key> <value> — override a parameter for one chat\n"
             "/unban <user_id> [chat_id] — lift a ban\n"
             "/allow <@user|user_id> — add to the whitelist\n"
             "/unallow <@user|user_id> — remove from the whitelist\n"
@@ -52,12 +53,16 @@ _CATALOG: dict[str, dict[str, str]] = {
             "Decision: {decision}\nConfidence: {conf:.2f}\nReason: {reason}\nModel: {model}"
         ),
         "test_error_suffix": "\nError: {error}",
-        "config_header": "⚙️ Parameters (change: /set <key> <value>):\n",
+        "config_header": "⚙️ Parameters (global; change: /set <key> <value>):\n",
+        "config_header_chat": "⚙️ Effective parameters for chat {chat_id}:\n",
         "config_item": "• {key} = {value}\n   {desc}",
         "set_usage": "Usage: /set <key> <value>\nKeys: /config",
         "set_unknown": "Unknown key «{key}».\nAvailable: {known}",
         "set_invalid": "Invalid value: {error}",
         "set_ok": "✅ {key} = {value}",
+        "setchat_usage": "Usage: /setchat <chat_id> <key> <value>",
+        "setchat_chat_num": "chat_id must be a number.",
+        "setchat_ok": "✅ chat {chat_id}: {key} = {value}",
         "unban_usage": "Usage: /unban <user_id> [chat_id]",
         "unban_user_id_num": "user_id must be a number.",
         "unban_chat_id_num": "chat_id must be a number.",
@@ -120,8 +125,9 @@ _CATALOG: dict[str, dict[str, str]] = {
             "/stats — статистика модерации\n"
             "/recent [N] — последние N действий (по умолчанию 10)\n"
             "/test <текст> — прогнать классификатор без последствий\n"
-            "/config — текущие параметры\n"
-            "/set <ключ> <значение> — изменить параметр\n"
+            "/config [chat_id] — текущие параметры\n"
+            "/set <ключ> <значение> — изменить глобальный параметр\n"
+            "/setchat <chat_id> <ключ> <значение> — переопределить параметр для чата\n"
             "/unban <user_id> [chat_id] — снять бан\n"
             "/allow <@user|user_id> — добавить в белый список\n"
             "/unallow <@user|user_id> — убрать из белого списка\n"
@@ -154,12 +160,16 @@ _CATALOG: dict[str, dict[str, str]] = {
             "Решение: {decision}\nУверенность: {conf:.2f}\nПричина: {reason}\nМодель: {model}"
         ),
         "test_error_suffix": "\nОшибка: {error}",
-        "config_header": "⚙️ Параметры (изменить: /set <ключ> <значение>):\n",
+        "config_header": "⚙️ Параметры (глобальные; изменить: /set <ключ> <значение>):\n",
+        "config_header_chat": "⚙️ Действующие параметры для чата {chat_id}:\n",
         "config_item": "• {key} = {value}\n   {desc}",
         "set_usage": "Использование: /set <ключ> <значение>\nСписок ключей: /config",
         "set_unknown": "Неизвестный ключ «{key}».\nДоступные: {known}",
         "set_invalid": "Неверное значение: {error}",
         "set_ok": "✅ {key} = {value}",
+        "setchat_usage": "Использование: /setchat <chat_id> <ключ> <значение>",
+        "setchat_chat_num": "chat_id должен быть числом.",
+        "setchat_ok": "✅ чат {chat_id}: {key} = {value}",
         "unban_usage": "Использование: /unban <user_id> [chat_id]",
         "unban_user_id_num": "user_id должен быть числом.",
         "unban_chat_id_num": "chat_id должен быть числом.",

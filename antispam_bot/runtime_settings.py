@@ -1,11 +1,14 @@
-"""Dynamic settings changeable at runtime via /set.
+"""Dynamic settings changeable at runtime via /set and /setchat.
 
-Defaults are seeded from Config (.env); values are persisted in the ``settings``
-table and cached in memory. Each setting has its own parser/validator.
+Defaults are seeded from Config (.env) and stored under chat_id 0; each chat may
+override any key. ``get(key, chat_id)`` returns the chat override if present, else
+the global default. ``language`` is resolved globally (chat_id 0) by the core.
+Each setting has its own parser/validator.
 """
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 from typing import Any
 
@@ -93,7 +96,8 @@ class Settings:
     def __init__(self, storage: Storage, config: Config) -> None:
         self.storage = storage
         self.config = config
-        self._cache: dict[str, object] = {}
+        self._cache: dict[str, object] = {}  # global defaults (chat_id 0)
+        self._chat_cache: dict[int, dict[str, object]] = {}  # per-chat overrides
 
     def _default(self, key: str) -> object:
         return {
@@ -118,33 +122,59 @@ class Settings:
             return "true" if v else "false"
         return str(v)
 
-    async def load(self) -> None:
-        stored = await self.storage.all_settings()
+    def _parse_rows(self, rows: dict[str, str]) -> dict[str, object]:
+        parsed: dict[str, object] = {}
         for key, (parse, _desc) in self.SPEC.items():
+            if key in rows:
+                with contextlib.suppress(ValueError):  # corrupted value -> fall back to default
+                    parsed[key] = parse(rows[key])
+        return parsed
+
+    async def load(self) -> None:
+        """Load global defaults (chat_id 0), seeding any that are missing."""
+        stored = await self.storage.all_settings(0)
+        for key in self.SPEC:
             if key in stored:
                 try:
-                    self._cache[key] = parse(stored[key])
+                    self._cache[key] = self.SPEC[key][0](stored[key])
                     continue
                 except ValueError:
-                    pass  # corrupted value — fall back to default
+                    pass
             value = self._default(key)
             self._cache[key] = value
-            await self.storage.set_setting(key, self._serialize(value))
+            await self.storage.set_setting(0, key, self._serialize(value))
 
-    def get(self, key: str) -> Any:
+    async def ensure_loaded(self, chat_id: int) -> None:
+        """Lazily load a chat's overrides into the cache."""
+        if not chat_id or chat_id in self._chat_cache:
+            return
+        self._chat_cache[chat_id] = self._parse_rows(await self.storage.all_settings(chat_id))
+
+    def get(self, key: str, chat_id: int = 0) -> Any:
+        if chat_id:
+            override = self._chat_cache.get(chat_id)
+            if override is not None and key in override:
+                return override[key]
         return self._cache[key]
 
-    def all(self) -> dict[str, object]:
-        return dict(self._cache)
+    def all(self, chat_id: int = 0) -> dict[str, object]:
+        merged = dict(self._cache)
+        if chat_id:
+            merged.update(self._chat_cache.get(chat_id, {}))
+        return merged
 
     def describe(self) -> dict[str, str]:
         return {k: desc for k, (_p, desc) in self.SPEC.items()}
 
-    async def set(self, key: str, raw: object) -> object:
+    async def set(self, key: str, raw: object, chat_id: int = 0) -> object:
         if key not in self.SPEC:
             raise KeyError(key)
-        parse, _desc = self.SPEC[key]
-        value = parse(raw)  # raises ValueError on invalid input
-        self._cache[key] = value
-        await self.storage.set_setting(key, self._serialize(value))
+        if chat_id:
+            await self.ensure_loaded(chat_id)
+        value = self.SPEC[key][0](raw)  # raises ValueError on invalid input
+        if chat_id:
+            self._chat_cache[chat_id][key] = value
+        else:
+            self._cache[key] = value
+        await self.storage.set_setting(chat_id, key, self._serialize(value))
         return value

@@ -42,11 +42,15 @@ async def test_stats(storage):
 
 
 async def test_settings_store(storage):
-    assert await storage.get_setting("x") is None
-    await storage.set_setting("x", "1")
-    await storage.set_setting("x", "2")  # upsert
-    assert await storage.get_setting("x") == "2"
-    assert await storage.all_settings() == {"x": "2"}
+    assert await storage.get_setting(0, "x") is None
+    await storage.set_setting(0, "x", "1")
+    await storage.set_setting(0, "x", "2")  # upsert
+    assert await storage.get_setting(0, "x") == "2"
+    # per-chat values are isolated from the global (chat_id 0) row
+    await storage.set_setting(-100, "x", "chat")
+    assert await storage.get_setting(-100, "x") == "chat"
+    assert await storage.all_settings(0) == {"x": "2"}
+    assert await storage.all_settings(-100) == {"x": "chat"}
 
 
 async def test_whitelist(storage):
