@@ -65,7 +65,7 @@ class Config(BaseSettings):
     llm_error_alert_threshold: int = 5
     db_path: str = "/app/data/bot.db"
     log_level: str = "INFO"
-    http_referer: str = "https://github.com/your-org/antispam-bot"
+    http_referer: str = "https://github.com/kiselas/next_antibot"
     app_title: str = "AntispamBot"
 
     @field_validator("admin_usernames", "llm_fallback_models", mode="before")

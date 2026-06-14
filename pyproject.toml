@@ -41,8 +41,8 @@ dev = [
 antispam-bot = "antispam_bot.main:main"
 
 [project.urls]
-Homepage = "https://github.com/your-org/antispam-bot"
-Issues = "https://github.com/your-org/antispam-bot/issues"
+Homepage = "https://github.com/kiselas/next_antibot"
+Issues = "https://github.com/kiselas/next_antibot/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["antispam_bot"]
