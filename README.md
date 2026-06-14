@@ -10,6 +10,11 @@ happen in the bot's DM.
 > Languages: bot messages are available in **English (default)** and **Russian**,
 > switchable at runtime with `/set language ru`.
 
+The moderation logic lives in a messenger-agnostic `core` that depends only on a
+`BotPlatform` port; Telegram is one adapter. Supporting another messenger means
+writing a single adapter (convert its updates to the event types in `platform.py`
+and implement `BotPlatform`) — the core, classifiers and storage are reused as-is.
+
 ## How it works
 
 ```
@@ -137,7 +142,9 @@ antispam_bot/
   storage.py          SQLite: trust, action log, stats, settings, whitelist
   runtime_settings.py dynamic parameters (/set)
   pipeline.py         pre-filter -> classifier -> decision
-  handlers.py         moderation, membership, admin commands, callbacks
+  core.py             messenger-agnostic moderation logic + admin commands
+  platform.py         BotPlatform port + normalized event types
+  telegram_adapter.py Telegram adapter: implements BotPlatform, converts updates
   classifiers/        pluggable backends (base, openai_compat, anthropic, ollama, heuristic)
 tests/                unit + integration tests (100% coverage)
 ```

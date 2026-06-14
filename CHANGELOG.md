@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+### Changed
+- Refactored to ports-and-adapters: a messenger-agnostic `core.Core` depends on a
+  `BotPlatform` port (`platform.py`); Telegram is now a thin adapter
+  (`telegram_adapter.py`). Adding a messenger no longer touches the core.
+- Tests split into `test_core.py` (core via a fake platform) and
+  `test_telegram_adapter.py`; coverage remains 100%.
+
 ## [0.2.0] - 2026-06-14
 
 ### Added

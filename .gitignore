@@ -8,6 +8,9 @@ venv/
 .DS_Store
 
 # caches / tooling
+.coverage
+.coverage.*
+htmlcov/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/

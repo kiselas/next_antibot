@@ -17,28 +17,36 @@ def test_main_registers_handlers(monkeypatch):
     assert captured["handlers"] >= 16
 
 
-async def test_post_init_and_shutdown(tmp_path):
-    cfg = Config(_env_file=None).model_copy(
-        update={
-            "db_path": str(tmp_path / "b.db"),
-            "classifier_backend": "heuristic",
-            "allowed_chat_ids": [],
-        }
-    )
+def _fake_app(cfg, *, set_commands=None):
     bot = AsyncMock()
     bot.get_me = AsyncMock(return_value=SimpleNamespace(username="x"))
-    bot.set_my_commands = AsyncMock()
-    jobs = []
-    jq = SimpleNamespace(run_repeating=lambda *a, **k: jobs.append(a))
-    app = SimpleNamespace(bot_data={"config": cfg}, job_queue=jq, bot=bot)
+    bot.set_my_commands = set_commands or AsyncMock()
+    return SimpleNamespace(
+        bot_data={"config": cfg},
+        job_queue=SimpleNamespace(run_repeating=lambda *a, **k: None),
+        bot=bot,
+    )
 
+
+def _heuristic_cfg(tmp_path):
+    return Config(_env_file=None).model_copy(
+        update={"db_path": str(tmp_path / "b.db"), "classifier_backend": "heuristic"}
+    )
+
+
+async def test_post_init_and_shutdown(tmp_path):
+    app = _fake_app(_heuristic_cfg(tmp_path))
     await m._post_init(app)
-    assert app.bot_data["classifier"].name == "heuristic"
-    assert jobs  # heartbeat scheduled
-
+    assert app.bot_data["core"].classifier.name == "heuristic"
     await m._heartbeat(SimpleNamespace(application=app))
     assert (tmp_path / "heartbeat").exists()
+    await m._post_shutdown(app)
 
+
+async def test_post_init_set_commands_failure(tmp_path):
+    app = _fake_app(_heuristic_cfg(tmp_path), set_commands=AsyncMock(side_effect=Exception("nope")))
+    await m._post_init(app)  # error swallowed
+    assert "core" in app.bot_data
     await m._post_shutdown(app)
 
 
@@ -51,19 +59,3 @@ async def test_heartbeat_write_failure():
     cfg = Config(_env_file=None).model_copy(update={"db_path": "/no_such_dir_xyz/sub/bot.db"})
     app = SimpleNamespace(bot_data={"config": cfg})
     await m._heartbeat(SimpleNamespace(application=app))  # OSError swallowed
-
-
-async def test_post_init_set_commands_failure(tmp_path):
-    cfg = Config(_env_file=None).model_copy(
-        update={"db_path": str(tmp_path / "b.db"), "classifier_backend": "heuristic"}
-    )
-    bot = AsyncMock()
-    bot.get_me = AsyncMock(return_value=SimpleNamespace(username="x"))
-    bot.set_my_commands = AsyncMock(side_effect=Exception("nope"))
-    app = SimpleNamespace(
-        bot_data={"config": cfg},
-        job_queue=SimpleNamespace(run_repeating=lambda *a, **k: None),
-        bot=bot,
-    )
-    await m._post_init(app)  # set_my_commands error swallowed
-    await m._post_shutdown(app)

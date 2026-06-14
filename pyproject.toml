@@ -79,8 +79,8 @@ check_untyped_defs = true
 warn_unused_ignores = false
 disallow_untyped_defs = false
 
-# PTB's Update.effective_message/effective_user are Optional; our message/command
-# handlers are only ever invoked with them present. Suppress that known friction.
+# PTB's Update.* attributes are Optional; the adapter guards them but mypy can't
+# always follow the narrowing across property accesses. Suppress that friction.
 [[tool.mypy.overrides]]
-module = "antispam_bot.handlers"
+module = "antispam_bot.telegram_adapter"
 disable_error_code = ["union-attr"]

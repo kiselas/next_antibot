@@ -1,4 +1,4 @@
-"""Entry point: build the PTB application and run long polling."""
+"""Entry point: wire the core to the Telegram adapter and run long polling."""
 
 from __future__ import annotations
 
@@ -18,26 +18,29 @@ from telegram.ext import (
     filters,
 )
 
-from . import handlers
-from .classifiers import Classifier, build_classifier
+from . import telegram_adapter as tg
+from .classifiers import build_classifier
 from .config import Config
+from .core import Core
 from .runtime_settings import Settings
 from .storage import Storage
 
 log = logging.getLogger(__name__)
 
+# (command, Core method, menu description)
 _COMMANDS = [
-    BotCommand("stats", "Moderation statistics"),
-    BotCommand("recent", "Recent actions"),
-    BotCommand("test", "Test text with the classifier"),
-    BotCommand("config", "Current parameters"),
-    BotCommand("set", "Change a parameter"),
-    BotCommand("unban", "Lift a ban by user_id"),
-    BotCommand("allow", "Add to the whitelist"),
-    BotCommand("unallow", "Remove from the whitelist"),
-    BotCommand("whitelist", "Show the whitelist"),
-    BotCommand("resetstats", "Reset statistics"),
-    BotCommand("help", "Help"),
+    ("start", "cmd_start", None),
+    ("help", "cmd_help", "Help"),
+    ("stats", "cmd_stats", "Moderation statistics"),
+    ("recent", "cmd_recent", "Recent actions"),
+    ("test", "cmd_test", "Test text with the classifier"),
+    ("config", "cmd_config", "Current parameters"),
+    ("set", "cmd_set", "Change a parameter"),
+    ("unban", "cmd_unban", "Lift a ban by user_id"),
+    ("allow", "cmd_allow", "Add to the whitelist"),
+    ("unallow", "cmd_unallow", "Remove from the whitelist"),
+    ("whitelist", "cmd_whitelist", "Show the whitelist"),
+    ("resetstats", "cmd_resetstats", "Reset statistics"),
 ]
 
 
@@ -59,22 +62,20 @@ async def _post_init(app: Application) -> None:
 
     storage = Storage(config.db_path)
     await storage.connect()
-
     settings = Settings(storage, config)
     await settings.load()
-
     classifier = build_classifier(config, settings)
 
-    app.bot_data.update(storage=storage, settings=settings, classifier=classifier)
-    app.bot_data["started_at"] = time.time()
-    app.bot_data["llm_error_streak"] = 0
-    app.bot_data["llm_alerted"] = False
+    core = Core(config, storage, settings, classifier, tg.TelegramPlatform(app.bot))
+    app.bot_data["core"] = core
 
     if app.job_queue is not None:
         app.job_queue.run_repeating(_heartbeat, interval=60, first=5)
 
     try:
-        await app.bot.set_my_commands(_COMMANDS)
+        await app.bot.set_my_commands(
+            [BotCommand(name, desc) for name, _m, desc in _COMMANDS if desc]
+        )
     except Exception as exc:  # non-critical
         log.warning("Could not set the command menu: %s", exc)
 
@@ -93,12 +94,10 @@ async def _post_init(app: Application) -> None:
 
 
 async def _post_shutdown(app: Application) -> None:
-    storage: Storage | None = app.bot_data.get("storage")
-    classifier: Classifier | None = app.bot_data.get("classifier")
-    if storage is not None:
-        await storage.close()
-    if classifier is not None:
-        await classifier.close()
+    core: Core | None = app.bot_data.get("core")
+    if core is not None:
+        await core.storage.close()
+        await core.classifier.close()
 
 
 def main() -> None:
@@ -119,33 +118,16 @@ def main() -> None:
     )
     app.bot_data["config"] = config
 
-    # Admin commands — DM only.
     private = filters.ChatType.PRIVATE
-    app.add_handler(CommandHandler("start", handlers.cmd_start, filters=private))
-    app.add_handler(CommandHandler("help", handlers.cmd_help, filters=private))
-    app.add_handler(CommandHandler("stats", handlers.cmd_stats, filters=private))
-    app.add_handler(CommandHandler("recent", handlers.cmd_recent, filters=private))
-    app.add_handler(CommandHandler("test", handlers.cmd_test, filters=private))
-    app.add_handler(CommandHandler("config", handlers.cmd_config, filters=private))
-    app.add_handler(CommandHandler("set", handlers.cmd_set, filters=private))
-    app.add_handler(CommandHandler("unban", handlers.cmd_unban, filters=private))
-    app.add_handler(CommandHandler("allow", handlers.cmd_allow, filters=private))
-    app.add_handler(CommandHandler("unallow", handlers.cmd_unallow, filters=private))
-    app.add_handler(CommandHandler("whitelist", handlers.cmd_whitelist, filters=private))
-    app.add_handler(CommandHandler("resetstats", handlers.cmd_resetstats, filters=private))
+    for name, method, _desc in _COMMANDS:
+        app.add_handler(CommandHandler(name, tg.make_command(method), filters=private))
 
-    # Action buttons in admin reports (unban/confirm/ban).
-    app.add_handler(CallbackQueryHandler(handlers.handle_callback))
+    app.add_handler(CallbackQueryHandler(tg.on_callback))
+    app.add_handler(ChatMemberHandler(tg.on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
+    app.add_handler(ChatMemberHandler(tg.on_chat_member, ChatMemberHandler.CHAT_MEMBER))
 
-    # Bot presence and membership tracking.
-    app.add_handler(
-        ChatMemberHandler(handlers.handle_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER)
-    )
-    app.add_handler(ChatMemberHandler(handlers.handle_chat_member, ChatMemberHandler.CHAT_MEMBER))
-
-    # Moderate text and captions in groups (commands excluded).
     group_msgs = filters.ChatType.GROUPS & (filters.TEXT | filters.CAPTION) & ~filters.COMMAND
-    app.add_handler(MessageHandler(group_msgs, handlers.handle_message))
+    app.add_handler(MessageHandler(group_msgs, tg.on_message))
 
     log.info("Starting long polling…")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
