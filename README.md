@@ -1,5 +1,9 @@
 # Antispam Bot
 
+[![CI](https://github.com/kiselas/next_antibot/actions/workflows/ci.yml/badge.svg)](https://github.com/kiselas/next_antibot/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/kiselas/next_antibot/actions/workflows/codeql.yml/badge.svg)](https://github.com/kiselas/next_antibot/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A self-hosted Telegram antispam bot (Python 3.12+ / python-telegram-bot v22).
 It classifies messages from new members with a **pluggable classifier backend**
 (LLM via any OpenAI-compatible API, native Anthropic, local Ollama, or a zero-cost
