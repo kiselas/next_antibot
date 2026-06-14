@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import time
+from typing import Any
 
 from .classifiers import Classifier
 from .config import Config
@@ -60,8 +61,7 @@ class Core:
         self.started_at = started_at if started_at is not None else time.time()
         self._llm_streak = 0
         self._llm_alerted = False
-        self._budget_day: tuple[str, int] | None = None
-        self._budget_alerted = False
+        self._budget: dict[int, dict[str, Any]] = {}  # per-chat daily counters
 
     # ---- small helpers ----
     @property
@@ -90,7 +90,8 @@ class Core:
             return
         if not self.chat_allowed(msg.chat_id):
             return
-        if not bool(self.settings.get("enabled")):
+        await self.settings.ensure_loaded(msg.chat_id)
+        if not bool(self.settings.get("enabled", msg.chat_id)):
             return
 
         rec = await self.storage.get_user(msg.chat_id, msg.user.id)
@@ -104,7 +105,7 @@ class Core:
             return
 
         rec = await self.storage.ensure_user(msg.chat_id, msg.user.id, msg.user.username)
-        trust_hours = int(self.settings.get("trust_after_hours"))
+        trust_hours = int(self.settings.get("trust_after_hours", msg.chat_id))
         if trust_hours > 0 and (time.time() - float(rec["first_seen"])) >= trust_hours * 3600:
             await self.storage.set_status(msg.chat_id, msg.user.id, "trusted")
             return
@@ -112,15 +113,17 @@ class Core:
         if not msg.text.strip():
             return
 
-        if not self._budget_consume():
+        if not self._budget_consume(msg.chat_id):
             await self.storage.incr_stat("llm_budget_skipped")
-            await self._on_budget_exceeded()
+            await self._on_budget_exceeded(msg.chat_id)
             return
 
         meta = MessageMeta(
             has_links=msg.has_links, has_mentions=msg.has_mentions, is_forward=msg.is_forward
         )
-        result = await evaluate(msg.text, meta, settings=self.settings, classifier=self.classifier)
+        result = await evaluate(
+            msg.text, meta, settings=self.settings, classifier=self.classifier, chat_id=msg.chat_id
+        )
 
         if result.decision in (Decision.CLEAN, Decision.SPAM):
             await self.storage.incr_stat("messages_checked")
@@ -130,7 +133,7 @@ class Core:
             await self._act_on_spam(msg, result)
         elif result.decision is Decision.CLEAN:
             count = await self.storage.increment_clean(msg.chat_id, msg.user.id)
-            threshold = int(self.settings.get("trust_after_clean_msgs"))
+            threshold = int(self.settings.get("trust_after_clean_msgs", msg.chat_id))
             if threshold > 0 and count >= threshold:
                 await self.storage.set_status(msg.chat_id, msg.user.id, "trusted")
         elif result.decision is Decision.ERROR:
@@ -140,7 +143,7 @@ class Core:
             await self.storage.incr_stat("messages_skipped_prefilter")
 
     async def _act_on_spam(self, msg: IncomingMessage, result: Result) -> None:
-        mode = str(self.settings.get("action_mode"))
+        mode = str(self.settings.get("action_mode", msg.chat_id))
         try:
             await self.platform.delete_message(msg.chat_id, msg.message_id)
         except Exception as exc:
@@ -213,28 +216,29 @@ class Core:
         unban = self._t("btn_unmute") if mode == "mute" else self._t("btn_unban")
         return [[(unban, cd("unban")), (self._t("btn_ok"), cd("ok"))]]
 
-    # ---- daily budget ----
-    def _budget_consume(self) -> bool:
-        limit = int(self.settings.get("llm_daily_limit"))
+    # ---- daily budget (per chat) ----
+    def _budget_consume(self, chat_id: int) -> bool:
+        limit = int(self.settings.get("llm_daily_limit", chat_id))
         if limit <= 0:
             return True
         today = time.strftime("%Y-%m-%d")
-        day, count = self._budget_day or (today, 0)
-        if day != today:
-            day, count, self._budget_alerted = today, 0, False
-        if count >= limit:
-            self._budget_day = (day, count)
+        b = self._budget.get(chat_id)
+        if b is None or b["day"] != today:
+            b = {"day": today, "count": 0, "alerted": False}
+            self._budget[chat_id] = b
+        if int(b["count"]) >= limit:
             return False
-        self._budget_day = (day, count + 1)
+        b["count"] = int(b["count"]) + 1
         return True
 
-    async def _on_budget_exceeded(self) -> None:
-        log.warning("Daily classifier limit reached — moderation paused (fail-safe).")
-        if self.config.admin_chat_id and not self._budget_alerted:
-            self._budget_alerted = True
+    async def _on_budget_exceeded(self, chat_id: int) -> None:
+        log.warning("Daily classifier limit reached for chat %s (fail-safe).", chat_id)
+        b = self._budget.setdefault(chat_id, {"day": "", "count": 0, "alerted": False})
+        if self.config.admin_chat_id and not b.get("alerted"):
+            b["alerted"] = True
             await self._safe_send(
                 self.config.admin_chat_id,
-                self._t("budget_alert", limit=self.settings.get("llm_daily_limit")),
+                self._t("budget_alert", limit=self.settings.get("llm_daily_limit", chat_id)),
             )
 
     # ---- classifier failure alerting ----
@@ -434,12 +438,38 @@ class Core:
     async def cmd_config(self, req: CommandRequest) -> None:
         if not await self._ensure_admin(req):
             return
-        values = self.settings.all()
-        lines = [self._t("config_header")]
+        chat_id = 0
+        if req.args:
+            try:
+                chat_id = int(req.args[0])
+            except ValueError:
+                chat_id = 0
+        await self.settings.ensure_loaded(chat_id)
+        values = self.settings.all(chat_id)
+        header = (
+            self._t("config_header")
+            if not chat_id
+            else self._t("config_header_chat", chat_id=chat_id)
+        )
+        lines = [header]
         for key, desc in self.settings.describe().items():
             shown = values[key] if values[key] != "" else "—"
             lines.append(self._t("config_item", key=key, value=shown, desc=desc))
         await self.platform.send_message(req.chat_id, "\n".join(lines))
+
+    async def _apply_set(
+        self, req: CommandRequest, key: str, raw: str, chat_id: int
+    ) -> object | None:
+        """Validate and persist a setting; reply on error. Returns value or None."""
+        try:
+            return await self.settings.set(key, raw, chat_id)
+        except KeyError:
+            await self.platform.send_message(
+                req.chat_id, self._t("set_unknown", key=key, known=", ".join(self.settings.SPEC))
+            )
+        except ValueError as exc:
+            await self.platform.send_message(req.chat_id, self._t("set_invalid", error=exc))
+        return None
 
     async def cmd_set(self, req: CommandRequest) -> None:
         if not await self._ensure_admin(req):
@@ -448,17 +478,27 @@ class Core:
             await self.platform.send_message(req.chat_id, self._t("set_usage"))
             return
         key, raw = req.args[0].lower(), " ".join(req.args[1:])
+        value = await self._apply_set(req, key, raw, 0)
+        if value is not None:
+            await self.platform.send_message(req.chat_id, self._t("set_ok", key=key, value=value))
+
+    async def cmd_setchat(self, req: CommandRequest) -> None:
+        if not await self._ensure_admin(req):
+            return
+        if len(req.args) < 3:
+            await self.platform.send_message(req.chat_id, self._t("setchat_usage"))
+            return
         try:
-            value = await self.settings.set(key, raw)
-        except KeyError:
+            chat_id = int(req.args[0])
+        except ValueError:
+            await self.platform.send_message(req.chat_id, self._t("setchat_chat_num"))
+            return
+        key, raw = req.args[1].lower(), " ".join(req.args[2:])
+        value = await self._apply_set(req, key, raw, chat_id)
+        if value is not None:
             await self.platform.send_message(
-                req.chat_id, self._t("set_unknown", key=key, known=", ".join(self.settings.SPEC))
+                req.chat_id, self._t("setchat_ok", key=key, value=value, chat_id=chat_id)
             )
-            return
-        except ValueError as exc:
-            await self.platform.send_message(req.chat_id, self._t("set_invalid", error=exc))
-            return
-        await self.platform.send_message(req.chat_id, self._t("set_ok", key=key, value=value))
 
     async def cmd_unban(self, req: CommandRequest) -> None:
         if not await self._ensure_admin(req):

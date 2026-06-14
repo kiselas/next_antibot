@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+### Added
+- Alembic-managed SQLite schema; migrations are applied automatically at startup
+  (and runnable via `alembic upgrade head`). Replaces ad-hoc `CREATE TABLE` calls.
+- Per-chat dynamic settings: `/set` changes global defaults, `/setchat <chat_id> …`
+  overrides a key for one chat, `/config [chat_id]` shows effective values. The daily
+  LLM budget is now tracked per chat. `language` remains global.
+
 ### Changed
 - Refactored to ports-and-adapters: a messenger-agnostic `core.Core` depends on a
   `BotPlatform` port (`platform.py`); Telegram is now a thin adapter

@@ -105,8 +105,9 @@ antispam-bot               # or: python -m antispam_bot
 | `/stats` | Moderation statistics |
 | `/recent [N]` | Last N actions with reason and text |
 | `/test <text>` | Run the classifier on text with no side effects |
-| `/config` | Current parameters |
-| `/set <key> <value>` | Change a parameter at runtime |
+| `/config [chat_id]` | Current parameters (effective for a chat) |
+| `/set <key> <value>` | Change a **global** parameter |
+| `/setchat <chat_id> <key> <value>` | Override a parameter for one chat |
 | `/unban <user_id> [chat_id]` | Lift a ban/mute and mark trusted |
 | `/allow` `/unallow` `/whitelist` | Manage the whitelist |
 | `/resetstats` | Reset statistics |
@@ -114,10 +115,24 @@ antispam-bot               # or: python -m antispam_bot
 If `ADMIN_CHAT_ID` is set, each action is reported there with inline buttons
 (**Unban/Unmute**, **OK**, or **Ban** in report mode) for one-tap correction.
 
-Runtime parameters (`/set`): `enabled`, `language`, `action_mode` (ban/mute/report),
+Runtime parameters: `enabled`, `language`, `action_mode` (ban/mute/report),
 `spam_confidence_threshold`, `trust_after_clean_msgs`, `trust_after_hours`,
 `min_chars_for_llm`, `max_chars_to_llm`, `llm_daily_limit`, `group_topic`,
 `allowed_domains`, `model`, `use_json_format`.
+
+**Per-chat settings.** `/set` changes the global default; `/setchat` overrides a key
+for a single chat (e.g. a stricter `spam_confidence_threshold` in one group). A chat
+falls back to the global default for any key it hasn't overridden. `language` is
+resolved globally.
+
+## Database & migrations
+
+State lives in SQLite (`DB_PATH`), with the schema managed by **Alembic**. Migrations
+are applied automatically at startup, so upgrades are seamless. To run them by hand:
+
+```bash
+DB_PATH=./data/bot.db alembic upgrade head
+```
 
 ## Development
 
@@ -143,8 +158,10 @@ antispam_bot/
   main.py             entry point, application builder, polling
   config.py           env config (pydantic-settings)
   i18n.py             message catalogs (en/ru)
-  storage.py          SQLite: trust, action log, stats, settings, whitelist
-  runtime_settings.py dynamic parameters (/set)
+  storage.py          SQLite data access (trust, action log, stats, settings, whitelist)
+  db.py               Alembic migration runner (applied at startup)
+  migrations/         Alembic environment + versioned schema migrations
+  runtime_settings.py dynamic per-chat parameters (/set, /setchat)
   pipeline.py         pre-filter -> classifier -> decision
   core.py             messenger-agnostic moderation logic + admin commands
   platform.py         BotPlatform port + normalized event types

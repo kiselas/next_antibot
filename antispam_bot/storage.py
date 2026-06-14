@@ -1,11 +1,15 @@
 """SQLite-backed state (aiosqlite).
 
+The schema is owned by Alembic migrations (``antispam_bot/migrations``), applied
+at startup via :func:`antispam_bot.db.run_migrations`. This module only reads and
+writes rows.
+
 Tables:
   users     — per-user trust status (untrusted/trusted) and clean-message counter;
   bans      — moderation action log (for review and statistics);
-  stats     — cumulative event counters;
-  settings  — dynamic parameters changed at runtime via /set;
-  whitelist — users that moderation always skips.
+  stats     — cumulative event counters (global);
+  settings  — dynamic parameters per chat (chat_id = 0 holds global defaults);
+  whitelist — users that moderation always skips (global).
 """
 
 from __future__ import annotations
@@ -13,48 +17,6 @@ from __future__ import annotations
 import time
 
 import aiosqlite
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    chat_id     INTEGER NOT NULL,
-    user_id     INTEGER NOT NULL,
-    username    TEXT,
-    status      TEXT    NOT NULL DEFAULT 'untrusted',
-    clean_count INTEGER NOT NULL DEFAULT 0,
-    first_seen  REAL    NOT NULL,
-    PRIMARY KEY (chat_id, user_id)
-);
-
-CREATE TABLE IF NOT EXISTS bans (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    chat_id      INTEGER NOT NULL,
-    user_id      INTEGER NOT NULL,
-    username     TEXT,
-    action       TEXT,
-    reason       TEXT,
-    confidence   REAL,
-    model        TEXT,
-    message_text TEXT,
-    ts           REAL    NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_bans_ts ON bans(ts);
-
-CREATE TABLE IF NOT EXISTS stats (
-    name  TEXT PRIMARY KEY,
-    value INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS settings (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS whitelist (
-    user_id  INTEGER,
-    username TEXT,
-    added_ts REAL NOT NULL
-);
-"""
 
 
 class Storage:
@@ -65,8 +27,6 @@ class Storage:
     async def connect(self) -> None:
         self.conn = await aiosqlite.connect(self.path)
         self.conn.row_factory = aiosqlite.Row
-        await self.conn.executescript(SCHEMA)
-        await self.conn.commit()
 
     async def close(self) -> None:
         if self.conn is not None:
@@ -169,7 +129,7 @@ class Storage:
         row = await cur.fetchone()
         return int(row["chat_id"]) if row else None
 
-    # ---- stats ----
+    # ---- stats (global) ----
     async def incr_stat(self, name: str, by: int = 1) -> None:
         await self._db.execute(
             "INSERT INTO stats(name, value) VALUES(?, ?) "
@@ -186,25 +146,27 @@ class Storage:
         await self._db.execute("DELETE FROM stats")
         await self._db.commit()
 
-    # ---- settings ----
-    async def get_setting(self, key: str) -> str | None:
-        cur = await self._db.execute("SELECT value FROM settings WHERE key=?", (key,))
+    # ---- settings (per chat; chat_id = 0 holds the global defaults) ----
+    async def get_setting(self, chat_id: int, key: str) -> str | None:
+        cur = await self._db.execute(
+            "SELECT value FROM settings WHERE chat_id=? AND key=?", (chat_id, key)
+        )
         row = await cur.fetchone()
         return row["value"] if row else None
 
-    async def set_setting(self, key: str, value: str) -> None:
+    async def set_setting(self, chat_id: int, key: str, value: str) -> None:
         await self._db.execute(
-            "INSERT INTO settings(key, value) VALUES(?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
+            "INSERT INTO settings(chat_id, key, value) VALUES(?, ?, ?) "
+            "ON CONFLICT(chat_id, key) DO UPDATE SET value=excluded.value",
+            (chat_id, key, value),
         )
         await self._db.commit()
 
-    async def all_settings(self) -> dict[str, str]:
-        cur = await self._db.execute("SELECT key, value FROM settings")
+    async def all_settings(self, chat_id: int) -> dict[str, str]:
+        cur = await self._db.execute("SELECT key, value FROM settings WHERE chat_id=?", (chat_id,))
         return {r["key"]: r["value"] for r in await cur.fetchall()}
 
-    # ---- whitelist ----
+    # ---- whitelist (global) ----
     async def is_whitelisted(self, user_id: int, username: str | None) -> bool:
         uname = username.lower() if username else None
         cur = await self._db.execute(

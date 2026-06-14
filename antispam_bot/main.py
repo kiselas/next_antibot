@@ -22,6 +22,7 @@ from . import telegram_adapter as tg
 from .classifiers import build_classifier
 from .config import Config
 from .core import Core
+from .db import run_migrations
 from .runtime_settings import Settings
 from .storage import Storage
 
@@ -35,7 +36,8 @@ _COMMANDS = [
     ("recent", "cmd_recent", "Recent actions"),
     ("test", "cmd_test", "Test text with the classifier"),
     ("config", "cmd_config", "Current parameters"),
-    ("set", "cmd_set", "Change a parameter"),
+    ("set", "cmd_set", "Change a global parameter"),
+    ("setchat", "cmd_setchat", "Override a parameter for one chat"),
     ("unban", "cmd_unban", "Lift a ban by user_id"),
     ("allow", "cmd_allow", "Add to the whitelist"),
     ("unallow", "cmd_unallow", "Remove from the whitelist"),
@@ -60,6 +62,7 @@ async def _heartbeat(context: ContextTypes.DEFAULT_TYPE) -> None:
 async def _post_init(app: Application) -> None:
     config: Config = app.bot_data["config"]
 
+    run_migrations(config.db_path)
     storage = Storage(config.db_path)
     await storage.connect()
     settings = Settings(storage, config)

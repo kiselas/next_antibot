@@ -23,6 +23,7 @@ dependencies = [
     "aiosqlite>=0.20,<1",
     "pydantic>=2.7,<3",
     "pydantic-settings>=2.3,<3",
+    "alembic>=1.13,<2",
 ]
 
 [project.optional-dependencies]
@@ -54,7 +55,7 @@ addopts = "-q"
 
 [tool.coverage.run]
 source = ["antispam_bot"]
-omit = ["antispam_bot/__main__.py"]
+omit = ["antispam_bot/__main__.py", "antispam_bot/migrations/*"]
 
 [tool.coverage.report]
 show_missing = true

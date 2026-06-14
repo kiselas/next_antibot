@@ -55,12 +55,14 @@ def test_spam_buttons(make_core, mode, primary):
 
 def test_budget_consume(make_core, settings):
     core = make_core()
-    assert core._budget_consume() is True  # unlimited by default
-    core._budget_day = ("2000-01-01", 999)
+    assert core._budget_consume(-1) is True  # unlimited by default
     settings._cache["llm_daily_limit"] = 2
-    assert core._budget_consume() is True  # day rollover resets counter
-    assert core._budget_consume() is True
-    assert core._budget_consume() is False
+    assert core._budget_consume(-1) is True
+    assert core._budget_consume(-1) is True
+    assert core._budget_consume(-1) is False  # per-chat limit hit
+    assert core._budget_consume(-2) is True  # separate chat has its own counter
+    core._budget[-1] = {"day": "2000-01-01", "count": 99, "alerted": True}
+    assert core._budget_consume(-1) is True  # day rollover resets
 
 
 # --------------------------------------------------------------------------- #
@@ -314,6 +316,7 @@ ALL_COMMANDS = [
     "cmd_test",
     "cmd_config",
     "cmd_set",
+    "cmd_setchat",
     "cmd_unban",
     "cmd_allow",
     "cmd_unallow",
@@ -435,3 +438,52 @@ async def test_cmd_resetstats(make_core, storage):
     await storage.incr_stat("spam_detected")
     await make_core(admin_user_ids=[1]).cmd_resetstats(cmd_req())
     assert await storage.all_stats() == {}
+
+
+# --------------------------------------------------------------------------- #
+# per-chat settings
+# --------------------------------------------------------------------------- #
+async def test_per_chat_enabled_disables_only_that_chat(make_core, platform, settings):
+    await settings.set("enabled", "false", chat_id=-100123)  # off in this chat only
+    clf = fake(SPAM)
+    await make_core(clf).on_message(msg_event("buy", chat_id=-100123))
+    assert clf.calls == 0  # disabled here
+    clf2 = fake(SPAM)
+    await make_core(clf2).on_message(msg_event("buy", chat_id=-100999))
+    assert clf2.calls == 1  # still on elsewhere
+
+
+async def test_per_chat_threshold(make_core, settings):
+    # global threshold lets 0.95 through as spam; chat override raises the bar
+    await settings.set("spam_confidence_threshold", "0.99", chat_id=-100123)
+    clf = fake(SPAM)  # confidence 0.95
+    await make_core(clf).on_message(msg_event("buy", chat_id=-100123))
+    assert clf.calls == 1  # classified, but below the chat's bar -> treated as clean
+
+
+async def test_cmd_setchat_applies(make_core, settings):
+    await make_core(admin_user_ids=[1]).cmd_setchat(cmd_req(args=["-100", "action_mode", "mute"]))
+    assert settings.get("action_mode", -100) == "mute"
+    assert settings.get("action_mode") == "ban"  # global unchanged
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["-100", "action_mode", "mute"],
+        ["x", "action_mode", "mute"],
+        ["-100", "nope", "1"],
+        ["-100", "action_mode", "bad"],
+        ["-100"],
+    ],
+    ids=["ok", "bad_chat", "unknown_key", "bad_value", "usage"],
+)
+async def test_cmd_setchat_replies(make_core, platform, args):
+    await make_core(admin_user_ids=[1]).cmd_setchat(cmd_req(args=args))
+    platform.mock.send_message.assert_awaited()
+
+
+@pytest.mark.parametrize("args", [[], ["-100"], ["notint"]], ids=["global", "chat", "bad_chat"])
+async def test_cmd_config(make_core, platform, args):
+    await make_core(admin_user_ids=[1]).cmd_config(cmd_req(args=args))
+    platform.mock.send_message.assert_awaited()

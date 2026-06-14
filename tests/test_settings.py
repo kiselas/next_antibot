@@ -55,7 +55,34 @@ async def test_unknown_key(settings):
 
 
 async def test_corrupted_value_falls_back(storage, config):
-    await storage.set_setting("spam_confidence_threshold", "not-a-number")
+    await storage.set_setting(0, "spam_confidence_threshold", "not-a-number")
     s = Settings(storage, config)
     await s.load()
     assert s.get("spam_confidence_threshold") == config.spam_confidence_threshold
+
+
+async def test_per_chat_override(settings):
+    await settings.set("spam_confidence_threshold", "0.5")  # global default
+    await settings.set("spam_confidence_threshold", "0.9", chat_id=-100)  # chat override
+    assert settings.get("spam_confidence_threshold") == 0.5  # global
+    assert settings.get("spam_confidence_threshold", -100) == 0.9  # overridden chat
+    assert settings.get("spam_confidence_threshold", -200) == 0.5  # other chat -> global
+    assert settings.all(-100)["spam_confidence_threshold"] == 0.9
+
+
+async def test_ensure_loaded_reads_persisted_override(storage, config):
+    await storage.set_setting(-100, "action_mode", "mute")  # persisted by "another session"
+    s = Settings(storage, config)
+    await s.load()
+    assert s.get("action_mode", -100) == "ban"  # not loaded yet -> global default
+    await s.ensure_loaded(-100)
+    assert s.get("action_mode", -100) == "mute"
+    assert s.get("action_mode", -200) == "ban"  # unrelated chat stays global
+
+
+async def test_corrupted_chat_override_ignored(storage, config):
+    await storage.set_setting(-100, "spam_confidence_threshold", "bad")
+    s = Settings(storage, config)
+    await s.load()
+    await s.ensure_loaded(-100)
+    assert s.get("spam_confidence_threshold", -100) == config.spam_confidence_threshold

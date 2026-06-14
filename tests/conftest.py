@@ -7,6 +7,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import aiosqlite
 import pytest
 
 os.environ.setdefault("BOT_TOKEN", "123:TEST")
@@ -19,6 +20,7 @@ from antispam_bot.classifiers.base import (  # noqa: E402
 )
 from antispam_bot.config import Config  # noqa: E402
 from antispam_bot.core import Core  # noqa: E402
+from antispam_bot.db import run_migrations  # noqa: E402
 from antispam_bot.platform import (  # noqa: E402
     BotMembership,
     BotPlatform,
@@ -97,10 +99,23 @@ def config():
     return Config(_env_file=None)
 
 
+@pytest.fixture(scope="session")
+def _template_db(tmp_path_factory):
+    """Migrate a template DB once per session; tests clone its schema into RAM."""
+    path = tmp_path_factory.mktemp("tmpl") / "tmpl.db"
+    run_migrations(str(path))
+    return str(path)
+
+
 @pytest.fixture
-async def storage(tmp_path):
-    st = Storage(str(tmp_path / "t.db"))
+async def storage(_template_db):
+    # Each test gets an isolated in-memory DB; the migrated schema is cloned in via
+    # SQLite's backup API (no disk, no cross-test state, schema stays Alembic-owned).
+    st = Storage(":memory:")
     await st.connect()
+    src = await aiosqlite.connect(_template_db)
+    await src.backup(st.conn)
+    await src.close()
     yield st
     await st.close()
 
