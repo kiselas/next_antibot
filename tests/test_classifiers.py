@@ -5,26 +5,37 @@ import pytest
 
 from antispam_bot.classifiers import AVAILABLE_BACKENDS, build_classifier
 from antispam_bot.classifiers.anthropic import AnthropicClassifier
-from antispam_bot.classifiers.base import (
-    ClassificationContext,
-    Verdict,
-    parse_verdict_json,
-)
+from antispam_bot.classifiers.base import ClassificationContext, Verdict, parse_verdict_json
 from antispam_bot.classifiers.heuristic import HeuristicClassifier
 from antispam_bot.classifiers.ollama import OllamaClassifier
 from antispam_bot.classifiers.openai_compat import OpenAICompatClassifier
 
-CTX = ClassificationContext(text="hello there friends", has_links=False)
+CTX = ClassificationContext(text="hello there friends")
+
+# backend -> (class, function wrapping a content string into that API's JSON shape)
+BACKENDS = {
+    "openai_compat": (OpenAICompatClassifier, lambda c: {"choices": [{"message": {"content": c}}]}),
+    "anthropic": (AnthropicClassifier, lambda c: {"content": [{"text": c}]}),
+    "ollama": (OllamaClassifier, lambda c: {"message": {"content": c}}),
+}
+HTTP_BACKENDS = [cls for cls, _ in BACKENDS.values()]
+HTTP_IDS = list(BACKENDS)
 
 
-# ---- parser ----
+def _swap(clf, handler):
+    clf.client = httpx.AsyncClient(base_url="http://x", transport=httpx.MockTransport(handler))
+
+
+# --------------------------------------------------------------------------- #
+# parser
+# --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "raw, is_spam, conf",
     [
         ('{"is_spam": true, "confidence": 0.9, "reason": "ad"}', True, 0.9),
         ('```json\n{"is_spam": false, "confidence": 0.1}\n```', False, 0.1),
-        ('junk {"is_spam": true, "confidence": 1.5} tail', True, 1.0),
-        ('{"is_spam": false, "confidence": -3}', False, 0.0),
+        ('junk {"is_spam": true, "confidence": 1.5} tail', True, 1.0),  # clamp high
+        ('{"is_spam": false, "confidence": -3}', False, 0.0),  # clamp low
     ],
 )
 def test_parse_ok(raw, is_spam, conf):
@@ -41,219 +52,126 @@ def test_verdict_clamp_non_numeric():
     assert Verdict(is_spam=True, confidence="oops").confidence == 0.0
 
 
-# ---- factory ----
-def test_factory(config, settings):
-    for backend, cls in [
-        ("openai_compat", OpenAICompatClassifier),
-        ("anthropic", AnthropicClassifier),
-        ("ollama", OllamaClassifier),
-        ("heuristic", HeuristicClassifier),
-    ]:
-        cfg = config.model_copy(update={"classifier_backend": backend})
-        assert isinstance(build_classifier(cfg, settings), cls)
-    assert set(AVAILABLE_BACKENDS) == {"openai_compat", "anthropic", "ollama", "heuristic"}
+# --------------------------------------------------------------------------- #
+# factory
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "backend, cls",
+    [(b, c) for b, (c, _) in BACKENDS.items()] + [("heuristic", HeuristicClassifier)],
+)
+def test_factory(config, settings, backend, cls):
+    cfg = config.model_copy(update={"classifier_backend": backend})
+    assert isinstance(build_classifier(cfg, settings), cls)
 
 
 def test_factory_unknown(config, settings):
-    cfg = config.model_copy(update={"classifier_backend": "bogus"})
     with pytest.raises(ValueError):
-        build_classifier(cfg, settings)
+        build_classifier(config.model_copy(update={"classifier_backend": "bogus"}), settings)
 
 
-def _swap_transport(clf, handler):
-    clf.client = httpx.AsyncClient(base_url="http://x", transport=httpx.MockTransport(handler))
+def test_available_backends():
+    assert set(AVAILABLE_BACKENDS) == {"openai_compat", "anthropic", "ollama", "heuristic"}
 
 
-# ---- openai_compat ----
-async def test_openai_success(config, settings):
-    clf = OpenAICompatClassifier(config, settings)
-    _swap_transport(
+# --------------------------------------------------------------------------- #
+# HTTP backends — uniform behaviour across all three
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("cls, wrap", list(BACKENDS.values()), ids=HTTP_IDS)
+async def test_backend_success(config, settings, cls, wrap):
+    clf = cls(config, settings)
+    _swap(
         clf,
-        lambda r: httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {"message": {"content": '{"is_spam":true,"confidence":0.9,"reason":"ad"}'}}
-                ]
-            },
-        ),
+        lambda r: httpx.Response(200, json=wrap('{"is_spam":true,"confidence":0.9,"reason":"x"}')),
     )
     res = await clf.classify(CTX)
     assert res.verdict.is_spam and res.error is None
     await clf.close()
 
 
+@pytest.mark.parametrize("cls, wrap", list(BACKENDS.values()), ids=HTTP_IDS)
+async def test_backend_bad_response(config, settings, cls, wrap):
+    clf = cls(config, settings)
+    _swap(clf, lambda r: httpx.Response(200, json=wrap("not json")))
+    res = await clf.classify(CTX)
+    assert res.verdict is None and res.error == "bad_response"
+    await clf.close()
+
+
+@pytest.mark.parametrize("cls", HTTP_BACKENDS, ids=HTTP_IDS)
+async def test_backend_malformed_payload(config, settings, cls):
+    clf = cls(config, settings)
+    _swap(clf, lambda r: httpx.Response(200, json={}))  # missing keys -> error
+    res = await clf.classify(CTX)
+    assert res.verdict is None and res.error == "unavailable"
+    await clf.close()
+
+
+@pytest.mark.parametrize(
+    "status, error", [(402, "out_of_credits"), (429, "rate_limited"), (500, "unavailable")]
+)
+@pytest.mark.parametrize("cls", HTTP_BACKENDS, ids=HTTP_IDS)
+async def test_backend_http_error(config, settings, cls, status, error):
+    clf = cls(config, settings)
+    _swap(clf, lambda r: httpx.Response(status, json={}))
+    res = await clf.classify(CTX)
+    assert res.verdict is None and res.error == error
+    await clf.close()
+
+
+# --------------------------------------------------------------------------- #
+# openai_compat specifics: model fallback and JSON-format toggle
+# --------------------------------------------------------------------------- #
 async def test_openai_fallback_on_402(config, settings):
     primary = str(settings.get("model"))
 
     def handler(req):
         body = json.loads(req.content)
         if body["model"] == primary:
-            return httpx.Response(402, json={"error": "no credits"})
+            return httpx.Response(402, json={})
         return httpx.Response(
-            200,
-            json={"choices": [{"message": {"content": '{"is_spam":false,"confidence":0.2}'}}]},
+            200, json={"choices": [{"message": {"content": '{"is_spam":false,"confidence":0.2}'}}]}
         )
 
     clf = OpenAICompatClassifier(config, settings)
-    _swap_transport(clf, handler)
+    _swap(clf, handler)
     res = await clf.classify(CTX)
-    assert res.verdict is not None and res.verdict.is_spam is False
-    assert res.model == config.llm_fallback_models[0]
+    assert res.verdict is not None and res.model == config.llm_fallback_models[0]
     await clf.close()
 
 
-async def test_openai_all_fail_out_of_credits(config, settings):
-    clf = OpenAICompatClassifier(config, settings)
-    _swap_transport(clf, lambda r: httpx.Response(402, json={}))
-    res = await clf.classify(CTX)
-    assert res.verdict is None and res.error == "out_of_credits"
-    await clf.close()
-
-
-async def test_openai_bad_response(config, settings):
-    clf = OpenAICompatClassifier(config, settings)
-    _swap_transport(
-        clf,
-        lambda r: httpx.Response(200, json={"choices": [{"message": {"content": "not json"}}]}),
-    )
-    res = await clf.classify(CTX)
-    assert res.verdict is None and res.error == "bad_response"
-    await clf.close()
-
-
-async def test_openai_rate_limited(config, settings):
-    clf = OpenAICompatClassifier(config, settings)
-    _swap_transport(clf, lambda r: httpx.Response(429, json={}))
-    res = await clf.classify(CTX)
-    assert res.error == "rate_limited"
-    await clf.close()
-
-
-async def test_openai_uses_json_format_toggle(config, settings):
+@pytest.mark.parametrize("use_json, present", [("true", True), ("false", False)])
+async def test_openai_json_format_toggle(config, settings, use_json, present):
     seen = {}
 
     def handler(req):
-        seen["has_format"] = "response_format" in json.loads(req.content)
+        seen["present"] = "response_format" in json.loads(req.content)
         return httpx.Response(
             200, json={"choices": [{"message": {"content": '{"is_spam":false,"confidence":0}'}}]}
         )
 
-    await settings.set("use_json_format", "false")
+    await settings.set("use_json_format", use_json)
     clf = OpenAICompatClassifier(config, settings)
-    _swap_transport(clf, handler)
+    _swap(clf, handler)
     await clf.classify(CTX)
-    assert seen["has_format"] is False
+    assert seen["present"] is present
     await clf.close()
 
 
-# ---- anthropic ----
-async def test_anthropic_success(config, settings):
-    cfg = config.model_copy(update={"classifier_backend": "anthropic"})
-    clf = AnthropicClassifier(cfg, settings)
-    _swap_transport(
-        clf,
-        lambda r: httpx.Response(
-            200, json={"content": [{"text": '{"is_spam":true,"confidence":0.8,"reason":"x"}'}]}
-        ),
-    )
-    res = await clf.classify(CTX)
-    assert res.verdict.is_spam and res.error is None
-    await clf.close()
-
-
-async def test_anthropic_error(config, settings):
-    clf = AnthropicClassifier(config, settings)
-    _swap_transport(clf, lambda r: httpx.Response(500, json={}))
-    res = await clf.classify(CTX)
-    assert res.verdict is None and res.error == "unavailable"
-    await clf.close()
-
-
-# ---- ollama ----
-async def test_ollama_success(config, settings):
-    clf = OllamaClassifier(config, settings)
-    _swap_transport(
-        clf,
-        lambda r: httpx.Response(
-            200, json={"message": {"content": '{"is_spam":false,"confidence":0.0}'}}
-        ),
-    )
-    res = await clf.classify(CTX)
-    assert res.verdict is not None and res.verdict.is_spam is False
-    await clf.close()
-
-
-# ---- heuristic ----
-async def test_heuristic_spam(config, settings):
+# --------------------------------------------------------------------------- #
+# heuristic backend
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "text, kw, is_spam, min_conf",
+    [
+        ("Заработок на крипте! пиши в личку https://t.me/scam", {"has_links": True}, True, 0.5),
+        ("see https://example.com", {"is_forward": True}, False, 0.2),
+        ("привет, как дела у всех?", {}, False, 0.0),
+    ],
+    ids=["spam", "forward_url", "clean"],
+)
+async def test_heuristic(config, settings, text, kw, is_spam, min_conf):
     clf = HeuristicClassifier(config, settings)
-    ctx = ClassificationContext(
-        text="Заработок на крипте! пиши в личку https://t.me/scam", has_links=True
-    )
-    res = await clf.classify(ctx)
-    assert res.verdict.is_spam is True
-    assert res.verdict.confidence >= 0.5
+    res = await clf.classify(ClassificationContext(text=text, **kw))
+    assert res.verdict.is_spam is is_spam
+    assert res.verdict.confidence >= min_conf
     assert res.error is None
-
-
-async def test_heuristic_clean(config, settings):
-    clf = HeuristicClassifier(config, settings)
-    res = await clf.classify(ClassificationContext(text="привет, как дела у всех?"))
-    assert res.verdict.is_spam is False
-    assert res.verdict.confidence == 0.0
-
-
-async def test_heuristic_forward_with_url(config, settings):
-    clf = HeuristicClassifier(config, settings)
-    ctx = ClassificationContext(text="see https://example.com", is_forward=True, lang="xx")
-    res = await clf.classify(ctx)
-    assert res.verdict.confidence > 0.0  # mention/forward+url signal
-
-
-# ---- extra error paths ----
-async def test_openai_malformed_json(config, settings):
-    clf = OpenAICompatClassifier(config, settings)
-    _swap_transport(clf, lambda r: httpx.Response(200, json={}))  # missing 'choices'
-    res = await clf.classify(CTX)
-    assert res.verdict is None and res.error == "unavailable"
-    await clf.close()
-
-
-async def test_anthropic_bad_response(config, settings):
-    clf = AnthropicClassifier(config, settings)
-    _swap_transport(clf, lambda r: httpx.Response(200, json={"content": [{"text": "not json"}]}))
-    res = await clf.classify(CTX)
-    assert res.verdict is None and res.error == "bad_response"
-    await clf.close()
-
-
-async def test_anthropic_malformed(config, settings):
-    clf = AnthropicClassifier(config, settings)
-    _swap_transport(clf, lambda r: httpx.Response(200, json={}))  # missing 'content'
-    res = await clf.classify(CTX)
-    assert res.verdict is None and res.error == "unavailable"
-    await clf.close()
-
-
-async def test_ollama_error(config, settings):
-    clf = OllamaClassifier(config, settings)
-    _swap_transport(clf, lambda r: httpx.Response(500, json={}))
-    res = await clf.classify(CTX)
-    assert res.verdict is None and res.error == "unavailable"
-    await clf.close()
-
-
-async def test_ollama_bad_response(config, settings):
-    clf = OllamaClassifier(config, settings)
-    _swap_transport(clf, lambda r: httpx.Response(200, json={"message": {"content": "nope"}}))
-    res = await clf.classify(CTX)
-    assert res.verdict is None and res.error == "bad_response"
-    await clf.close()
-
-
-async def test_ollama_malformed(config, settings):
-    clf = OllamaClassifier(config, settings)
-    _swap_transport(clf, lambda r: httpx.Response(200, json={}))  # missing 'message'
-    res = await clf.classify(CTX)
-    assert res.verdict is None and res.error == "unavailable"
-    await clf.close()

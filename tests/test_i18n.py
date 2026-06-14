@@ -1,19 +1,20 @@
-from antispam_bot.i18n import SUPPORTED_LANGS, normalize_lang, t
+import pytest
+
+from antispam_bot.i18n import _CATALOG, SUPPORTED_LANGS, normalize_lang, t
 
 
-def test_lookup_en_ru():
-    assert t("cb_done", "en") == "Done"
-    assert t("cb_done", "ru") == "Готово"
-
-
-def test_fallback_unknown_lang():
-    assert normalize_lang("fr") == "en"
-    assert t("cb_done", "fr") == "Done"  # falls back to English
-    assert t("cb_done", None) == "Done"
-
-
-def test_missing_key_returns_key():
-    assert t("no_such_key", "en") == "no_such_key"
+@pytest.mark.parametrize(
+    "key, lang, expected",
+    [
+        ("cb_done", "en", "Done"),
+        ("cb_done", "ru", "Готово"),
+        ("cb_done", "fr", "Done"),  # unknown lang -> English fallback
+        ("cb_done", None, "Done"),
+        ("no_such_key", "en", "no_such_key"),  # missing key -> key itself
+    ],
+)
+def test_t(key, lang, expected):
+    assert t(key, lang) == expected
 
 
 def test_formatting():
@@ -21,8 +22,11 @@ def test_formatting():
     assert "model" in out and "x" in out
 
 
-def test_all_keys_present_in_both_langs():
-    from antispam_bot.i18n import _CATALOG
+@pytest.mark.parametrize("lang, expected", [("ru", "ru"), ("en", "en"), ("fr", "en"), (None, "en")])
+def test_normalize_lang(lang, expected):
+    assert normalize_lang(lang) == expected
 
+
+def test_catalogs_consistent():
     assert set(_CATALOG["en"]) == set(_CATALOG["ru"])
-    assert set(SUPPORTED_LANGS) == {"en", "ru"}
+    assert set(SUPPORTED_LANGS) == set(_CATALOG)
