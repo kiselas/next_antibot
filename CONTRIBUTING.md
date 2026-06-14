@@ -20,7 +20,11 @@ ruff check antispam_bot tests
 ruff format antispam_bot tests
 mypy antispam_bot
 pytest --cov
+bandit -r antispam_bot --severity-level medium   # code security (SAST)
+pip-audit                                         # dependency vulnerabilities
 ```
+
+CI also runs CodeQL and a secret scan (gitleaks) on every pull request.
 
 Or install the git hooks: `pre-commit install`.
 
