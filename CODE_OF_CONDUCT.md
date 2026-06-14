@@ -1,35 +1,31 @@
-# Кодекс поведения участников
+# Contributor Code of Conduct
 
-## Наше обязательство
+## Our pledge
 
-В интересах открытого и дружелюбного сообщества мы как участники и сопровождающие
-обязуемся сделать участие в проекте свободным от притеснений для всех — независимо от
-возраста, телосложения, инвалидности, этнической принадлежности, пола, уровня опыта,
-национальности, внешности, расы, религии или сексуальной идентичности.
+In the interest of fostering an open and welcoming community, we as contributors and
+maintainers pledge to make participation in our project a harassment-free experience
+for everyone, regardless of age, body size, disability, ethnicity, gender identity
+and expression, level of experience, nationality, personal appearance, race,
+religion, or sexual identity and orientation.
 
-## Наши стандарты
+## Our standards
 
-Примеры поведения, способствующего здоровой атмосфере:
+Examples of behavior that contributes to a positive environment:
 
-- доброжелательность и уважение к чужому мнению;
-- конструктивная критика и её спокойное принятие;
-- фокус на том, что лучше для сообщества.
+- being kind and respectful of differing viewpoints;
+- giving and gracefully accepting constructive feedback;
+- focusing on what is best for the community.
 
-Недопустимо:
+Unacceptable behavior:
 
-- оскорбления, переход на личности, троллинг;
-- притеснения в любой форме, публичные или приватные;
-- публикация чужой личной информации без разрешения.
+- insults, personal attacks, or trolling;
+- harassment of any kind, public or private;
+- publishing others' private information without permission.
 
-## Ответственность
+## Enforcement
 
-Сопровождающие вправе удалять, редактировать или отклонять комментарии, коммиты, код,
-issue и другой вклад, не соответствующий данному кодексу.
+Maintainers may remove, edit, or reject contributions that do not align with this
+Code of Conduct. Report unacceptable behavior to **kisel.nf97@gmail.com**. All
+complaints will be reviewed confidentially.
 
-## Применение
-
-О случаях неприемлемого поведения сообщайте на **kisel.nf97@gmail.com**. Все жалобы
-будут рассмотрены конфиденциально.
-
-Документ адаптирован из [Contributor Covenant](https://www.contributor-covenant.org),
-версия 2.1.
+Adapted from the [Contributor Covenant](https://www.contributor-covenant.org), v2.1.

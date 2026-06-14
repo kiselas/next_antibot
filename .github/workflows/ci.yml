@@ -19,9 +19,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - name: Install dependencies
-        run: pip install -r requirements-dev.txt
-      - name: Compile
-        run: python -m py_compile app/*.py
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Lint (ruff)
+        run: ruff check antispam_bot tests
+      - name: Type check (mypy)
+        run: mypy antispam_bot
       - name: Tests
-        run: pytest -q
+        run: pytest --cov --cov-report=term-missing

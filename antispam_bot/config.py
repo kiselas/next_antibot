@@ -1,9 +1,14 @@
-"""Конфигурация бота из переменных окружения (.env)."""
+"""Bot configuration loaded from environment variables (.env).
+
+Provider-neutral ``LLM_*`` names are preferred; legacy ``OPENROUTER_*`` names are
+accepted as aliases for backward compatibility.
+"""
+
 from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -20,18 +25,34 @@ class Config(BaseSettings):
     admin_usernames: Annotated[list[str], NoDecode] = Field(default_factory=list)
     admin_user_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
     admin_chat_id: int | None = None
-    # Список разрешённых чатов. Пусто = работать везде (с предупреждением в логах).
+    # Allowed chats. Empty = work everywhere (with a startup warning).
     allowed_chat_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
 
-    # --- OpenRouter ---
-    openrouter_api_key: str
-    openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_model: str = "google/gemini-2.0-flash-lite-001"
-    openrouter_fallback_models: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["meta-llama/llama-3.3-70b-instruct:free"]
-    )
+    # --- Classifier backend ---
+    # One of: openai_compat | anthropic | ollama | heuristic
+    classifier_backend: str = "openai_compat"
 
-    # --- Поведение модерации (дефолты для динамических настроек) ---
+    # --- LLM connection (provider-neutral; OPENROUTER_* kept as aliases) ---
+    llm_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("LLM_API_KEY", "OPENROUTER_API_KEY"),
+    )
+    llm_base_url: str = Field(
+        default="https://openrouter.ai/api/v1",
+        validation_alias=AliasChoices("LLM_BASE_URL", "OPENROUTER_BASE_URL"),
+    )
+    llm_model: str = Field(
+        default="google/gemini-2.0-flash-lite-001",
+        validation_alias=AliasChoices("LLM_MODEL", "OPENROUTER_MODEL"),
+    )
+    llm_fallback_models: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["meta-llama/llama-3.3-70b-instruct:free"],
+        validation_alias=AliasChoices("LLM_FALLBACK_MODELS", "OPENROUTER_FALLBACK_MODELS"),
+    )
+    anthropic_version: str = "2023-06-01"
+
+    # --- Moderation defaults (seed values for dynamic settings) ---
+    bot_language: str = "en"
     spam_confidence_threshold: float = 0.85
     trust_after_clean_msgs: int = 3
     trust_after_hours: int = 24
@@ -39,23 +60,22 @@ class Config(BaseSettings):
     min_chars_for_llm: int = 2
     group_topic: str = ""
 
-    # --- Прочее ---
+    # --- Misc ---
     llm_timeout_seconds: float = 8.0
-    # Сколько ошибок LLM подряд до уведомления админа.
     llm_error_alert_threshold: int = 5
     db_path: str = "/app/data/bot.db"
     log_level: str = "INFO"
-    http_referer: str = "https://github.com/antispam-bot"
+    http_referer: str = "https://github.com/your-org/antispam-bot"
     app_title: str = "AntispamBot"
 
-    @field_validator("admin_usernames", "openrouter_fallback_models", mode="before")
+    @field_validator("admin_usernames", "llm_fallback_models", mode="before")
     @classmethod
     def _split_csv(cls, v: object) -> list[str]:
         if v is None or v == "":
             return []
         if isinstance(v, str):
             return [item.strip() for item in v.split(",") if item.strip()]
-        return list(v)  # type: ignore[arg-type]
+        return list(v)  # type: ignore  # already a sequence at this point
 
     @field_validator("admin_user_ids", "allowed_chat_ids", mode="before")
     @classmethod
@@ -64,7 +84,7 @@ class Config(BaseSettings):
             return []
         if isinstance(v, str):
             return [int(item.strip()) for item in v.split(",") if item.strip()]
-        return [int(x) for x in v]  # type: ignore[union-attr]
+        return [int(x) for x in v]  # type: ignore  # already an iterable at this point
 
     @field_validator("admin_usernames", mode="after")
     @classmethod

@@ -1,35 +1,33 @@
-# Политика безопасности
+# Security Policy
 
-## Поддерживаемые версии
+## Supported versions
 
-Исправления безопасности выпускаются для последнего релиза в ветке `main`.
+Security fixes target the latest release on the `main` branch.
 
-## Как сообщить об уязвимости
+## Reporting a vulnerability
 
-**Не открывайте публичный issue для уязвимостей.**
+**Do not open a public issue for vulnerabilities.**
 
-- Предпочтительно: GitHub → вкладка **Security** → *Report a vulnerability*
-  (приватный security advisory).
-- Либо письмом на **kisel.nf97@gmail.com** с темой `SECURITY: antispam-bot`.
+- Preferred: GitHub → **Security** tab → *Report a vulnerability* (private advisory).
+- Or email **kisel.nf97@gmail.com** with the subject `SECURITY: antispam-bot`.
 
-Опишите: затронутую версию/коммит, шаги воспроизведения, потенциальное влияние.
-Мы постараемся ответить в течение 7 дней и согласовать сроки раскрытия.
+Please include the affected version/commit, reproduction steps, and impact. We aim
+to respond within 7 days and to agree on a disclosure timeline.
 
-## Важно для самостоятельного развёртывания
+## Notes for self-hosting
 
-Этот бот — self-hosted. Безопасность вашего экземпляра зависит от конфигурации:
+This is a self-hosted bot; the security of your instance depends on its configuration:
 
-- **Секреты только в `.env`.** Никогда не коммитьте `.env` (он в `.gitignore`).
-  `BOT_TOKEN` и `OPENROUTER_API_KEY` дают полный контроль над ботом и тратят ваши
-  деньги — храните их как пароли. При утечке немедленно отзовите токен у @BotFather
-  и пересоздайте ключ OpenRouter.
-- **Ограничьте чаты.** Задавайте `ALLOWED_CHAT_IDS`, иначе бота можно добавить в
-  чужой чат и расходовать вашу квоту OpenRouter (бот сам выходит из неразрешённых
-  чатов, но список лучше задать явно).
-- **Дневной лимит LLM.** Установите `llm_daily_limit` (`/set llm_daily_limit N`)
-  как потолок расходов на случай флуда/рейда.
-- **Админы по ID.** Для надёжности используйте `ADMIN_USER_IDS` (ID неизменяем),
-  а не только `ADMIN_USERNAMES` (ник можно сменить/освободить).
-- **Приватность.** Бот хранит тексты подозрительных сообщений в локальной SQLite
-  (журнал банов) и пишет их в логи на уровне INFO. Это нужно для разбора ложных
-  срабатываний; учитывайте при выборе уровня логирования и доступа к `./data`.
+- **Secrets only in `.env`.** Never commit `.env` (it is git-ignored). `BOT_TOKEN`
+  and your classifier API key grant full control and spend your money — treat them
+  like passwords. If leaked, revoke the token via @BotFather and rotate the key.
+- **Restrict chats.** Set `ALLOWED_CHAT_IDS`, otherwise the bot can be added to a
+  foreign chat and consume your LLM quota (it auto-leaves non-allowed chats, but an
+  explicit list is safer).
+- **Daily budget.** Set `llm_daily_limit` (`/set llm_daily_limit N`) as a spend cap
+  against flooding/raids.
+- **Admins by ID.** Prefer `ADMIN_USER_IDS` (immutable) over `ADMIN_USERNAMES`
+  (usernames can be changed/released).
+- **Privacy.** The bot stores suspicious message text in a local SQLite log and
+  writes it to INFO-level logs (for false-positive review). Restrict access to
+  `./data` and raise `LOG_LEVEL` if needed.

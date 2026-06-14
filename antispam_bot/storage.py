@@ -1,12 +1,13 @@
-"""Хранилище состояния на SQLite (aiosqlite).
+"""SQLite-backed state (aiosqlite).
 
-Таблицы:
-  users     — статус доверия участников (untrusted/trusted), счётчик чистых сообщений;
-  bans      — журнал действий модерации (для контроля и статистики);
-  stats     — кумулятивные счётчики событий;
-  settings  — динамические параметры, изменяемые на лету командой /set;
-  whitelist — пользователи, которых модерация всегда пропускает.
+Tables:
+  users     — per-user trust status (untrusted/trusted) and clean-message counter;
+  bans      — moderation action log (for review and statistics);
+  stats     — cumulative event counters;
+  settings  — dynamic parameters changed at runtime via /set;
+  whitelist — users that moderation always skips.
 """
+
 from __future__ import annotations
 
 import time
@@ -74,7 +75,7 @@ class Storage:
 
     @property
     def _db(self) -> aiosqlite.Connection:
-        assert self.conn is not None, "Storage не подключён (вызовите connect())"
+        assert self.conn is not None, "Storage is not connected (call connect())"
         return self.conn
 
     # ---- users ----
@@ -84,9 +85,7 @@ class Storage:
         )
         return await cur.fetchone()
 
-    async def ensure_user(
-        self, chat_id: int, user_id: int, username: str | None
-    ) -> aiosqlite.Row:
+    async def ensure_user(self, chat_id: int, user_id: int, username: str | None) -> aiosqlite.Row:
         await self._db.execute(
             "INSERT INTO users(chat_id, user_id, username, status, clean_count, first_seen) "
             "VALUES(?, ?, ?, 'untrusted', 0, ?) "
@@ -119,15 +118,13 @@ class Storage:
         return int(row["clean_count"]) if row else 0
 
     async def user_counts(self) -> dict[str, int]:
-        cur = await self._db.execute(
-            "SELECT status, COUNT(*) AS c FROM users GROUP BY status"
-        )
+        cur = await self._db.execute("SELECT status, COUNT(*) AS c FROM users GROUP BY status")
         rows = await cur.fetchall()
         counts = {r["status"]: int(r["c"]) for r in rows}
         counts["total"] = sum(counts.values())
         return counts
 
-    # ---- bans / журнал действий ----
+    # ---- bans / action log ----
     async def record_ban(
         self,
         chat_id: int,
@@ -140,9 +137,19 @@ class Storage:
         message_text: str,
     ) -> None:
         await self._db.execute(
-            "INSERT INTO bans(chat_id, user_id, username, action, reason, confidence, model, message_text, ts) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (chat_id, user_id, username, action, reason, confidence, model, message_text, time.time()),
+            "INSERT INTO bans(chat_id, user_id, username, action, reason, confidence, model, "
+            "message_text, ts) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                chat_id,
+                user_id,
+                username,
+                action,
+                reason,
+                confidence,
+                model,
+                message_text,
+                time.time(),
+            ),
         )
         await self._db.commit()
 
@@ -152,9 +159,7 @@ class Storage:
         return int(row["c"]) if row else 0
 
     async def recent_bans(self, limit: int = 10) -> list[aiosqlite.Row]:
-        cur = await self._db.execute(
-            "SELECT * FROM bans ORDER BY ts DESC LIMIT ?", (limit,)
-        )
+        cur = await self._db.execute("SELECT * FROM bans ORDER BY ts DESC LIMIT ?", (limit,))
         return list(await cur.fetchall())
 
     async def last_ban_chat(self, user_id: int) -> int | None:
@@ -203,14 +208,14 @@ class Storage:
     async def is_whitelisted(self, user_id: int, username: str | None) -> bool:
         uname = username.lower() if username else None
         cur = await self._db.execute(
-            "SELECT 1 FROM whitelist WHERE user_id=? OR (username IS NOT NULL AND LOWER(username)=?) LIMIT 1",
+            "SELECT 1 FROM whitelist WHERE user_id=? OR "
+            "(username IS NOT NULL AND LOWER(username)=?) LIMIT 1",
             (user_id, uname),
         )
         return await cur.fetchone() is not None
 
     async def add_whitelist(self, user_id: int | None, username: str | None) -> bool:
         uname = username.lstrip("@") if username else None
-        # Не дублируем существующую запись.
         if user_id is not None:
             cur = await self._db.execute(
                 "SELECT 1 FROM whitelist WHERE user_id=? LIMIT 1", (user_id,)
@@ -230,13 +235,9 @@ class Storage:
         await self._db.commit()
         return True
 
-    async def remove_whitelist(
-        self, user_id: int | None, username: str | None
-    ) -> int:
+    async def remove_whitelist(self, user_id: int | None, username: str | None) -> int:
         if user_id is not None:
-            cur = await self._db.execute(
-                "DELETE FROM whitelist WHERE user_id=?", (user_id,)
-            )
+            cur = await self._db.execute("DELETE FROM whitelist WHERE user_id=?", (user_id,))
         elif username is not None:
             cur = await self._db.execute(
                 "DELETE FROM whitelist WHERE LOWER(username)=?",

@@ -6,6 +6,21 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-14
+
+### Added
+- Pluggable classifier backends (`CLASSIFIER_BACKEND`): OpenAI-compatible,
+  native Anthropic, local Ollama, and an offline heuristic.
+- i18n for bot messages (English default + Russian), switchable via `/set language`.
+- `pyproject.toml` packaging with the `antispam-bot` entry point.
+- ruff + mypy + pre-commit; CI runs lint, type check and tests.
+- Test suite expanded to 100% coverage.
+
+### Changed
+- Package renamed to `antispam_bot` (run with `antispam-bot` or `python -m antispam_bot`).
+- Provider-neutral `LLM_*` env vars (legacy `OPENROUTER_*` still accepted).
+- Source comments and docs are English-first.
+
 ## [0.1.0] - 2026-06-14
 
 ### Добавлено

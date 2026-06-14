@@ -7,17 +7,17 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Непривилегированный пользователь
+# Unprivileged user
 RUN useradd --create-home --uid 10001 appuser
 
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+# Install the package (pyproject is the single source of truth for deps).
+COPY pyproject.toml README.md ./
+COPY antispam_bot ./antispam_bot
+RUN pip install .
 
-COPY app ./app
-
-# Каталог для SQLite (монтируется томом в docker-compose)
+# Data directory for SQLite (mounted as a volume in docker-compose).
 RUN mkdir -p /app/data && chown -R appuser:appuser /app
 
 USER appuser
 
-CMD ["python", "-m", "app.main"]
+CMD ["antispam-bot"]
