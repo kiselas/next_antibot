@@ -174,7 +174,8 @@ git pull && docker compose up -d --build # update (migrations auto-apply on star
 | Spam not actioned; LLM errors (402/429) | Out of provider credits / rate limit — top up or switch `LLM_MODEL`; on failure the bot is fail-safe (no bans) |
 | No action reports | `ADMIN_CHAT_ID` not set |
 | Won't start, complains about variables | `BOT_TOKEN` missing (or `LLM_API_KEY` for non-heuristic backends) |
-| Can't reach Telegram/OpenRouter from the host | Needs outbound HTTPS; behind restrictions use a host-level outbound proxy |
+| Can't reach Telegram from the host | Needs outbound HTTPS to `api.telegram.org`. Where it's blocked, set `TELEGRAM_PROXY` (e.g. `socks5h://user:pass@host:1080` or `http://host:8080`) to route Bot API + polling through a proxy |
+| Can't reach OpenRouter/LLM from the host | Needs outbound HTTPS; behind restrictions use a host-level outbound proxy |
 
 ## Management (in the bot's DM, admins only)
 

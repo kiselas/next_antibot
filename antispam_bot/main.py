@@ -103,6 +103,21 @@ async def _post_shutdown(app: Application) -> None:
         await core.classifier.close()
 
 
+def _build_application(config: Config) -> Application:
+    builder = (
+        Application.builder()
+        .token(config.bot_token)
+        .concurrent_updates(True)
+        .rate_limiter(AIORateLimiter())
+        .post_init(_post_init)
+        .post_shutdown(_post_shutdown)
+    )
+    if config.telegram_proxy:
+        builder.proxy(config.telegram_proxy)
+        builder.get_updates_proxy(config.telegram_proxy)
+    return builder.build()
+
+
 def main() -> None:
     config = Config()  # type: ignore[call-arg]  # values come from env, not args
     logging.basicConfig(
@@ -110,15 +125,7 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s | %(message)s",
     )
 
-    app = (
-        Application.builder()
-        .token(config.bot_token)
-        .concurrent_updates(True)
-        .rate_limiter(AIORateLimiter())
-        .post_init(_post_init)
-        .post_shutdown(_post_shutdown)
-        .build()
-    )
+    app = _build_application(config)
     app.bot_data["config"] = config
 
     private = filters.ChatType.PRIVATE
