@@ -98,6 +98,84 @@ pip install -e .            # or: pip install .
 antispam-bot               # or: python -m antispam_bot
 ```
 
+## Deployment
+
+The bot uses **long polling**, so the server only needs outbound HTTPS to the
+Telegram API and your LLM provider — no inbound ports, public IP, or domain. That
+makes it easy to run behind NAT/firewalls. Requirements: Docker + Docker Compose,
+plus the BotFather steps from [Setup](#setup) (token, Privacy Mode **off**, bot is a
+group admin with delete/ban rights).
+
+### 1. Get the code and configure
+
+```bash
+git clone https://github.com/kiselas/next_antibot.git
+cd next_antibot
+cp .env.example .env        # then edit it
+```
+
+Minimum `.env` for production:
+
+```ini
+BOT_TOKEN=123456:ABC...
+ADMIN_USER_IDS=<your_telegram_id>        # ask @userinfobot; more reliable than @username
+ADMIN_CHAT_ID=<where to send action reports; your id works>
+ALLOWED_CHAT_IDS=-100xxxxxxxxxx          # your group id (see below)
+
+CLASSIFIER_BACKEND=openai_compat         # or `heuristic` for a key-less first run
+LLM_API_KEY=sk-or-v1-...
+LLM_MODEL=google/gemini-2.0-flash-lite-001
+```
+
+**Finding the group id:** leave `ALLOWED_CHAT_IDS` empty for the first start, add the
+bot to the group, and read `Bot added to chat <id>` from the logs (or use
+[@getidsbot](https://t.me/getidsbot)). Then set `ALLOWED_CHAT_IDS` and restart.
+
+### 2. Start
+
+```bash
+docker compose up -d --build
+docker compose logs -f
+```
+
+On first start, Alembic migrations create `./data/bot.db` and the log shows
+`Bot @<name> started. Backend: ...`.
+
+### 3. Verify
+
+1. **Container health:** `docker compose ps` → `STATUS` becomes `healthy` (~30 s;
+   driven by a heartbeat file).
+2. **Bot/admin works:** DM the bot `/start`, `/stats`, `/config`. Run
+   `/test купи крипту, пиши в личку t.me/scam` — it returns `Decision: spam …`. This
+   exercises the whole classifier path with no side effects (best smoke test).
+3. **Live moderation:** from a *second, non-admin* account post spam in the group —
+   the message is deleted and the user is banned/muted, with a report (and inline
+   buttons) sent to `ADMIN_CHAT_ID`. If nothing happens, it's almost always Privacy
+   Mode still on or the bot missing admin rights.
+4. **State on disk:** `ls -la data/` shows `bot.db` and `heartbeat`.
+
+### 4. Operate
+
+```bash
+docker compose logs -f --tail=100        # logs
+docker compose restart                   # restart (e.g. after editing .env)
+git pull && docker compose up -d --build # update (migrations auto-apply on start)
+```
+
+- **Backups:** save the `./data` directory (it holds the whole SQLite DB).
+- **Tuning without restart:** `/set`, `/setchat`, `/config` in the bot's DM.
+
+### Troubleshooting
+
+| Symptom | Likely cause / fix |
+|---|---|
+| Bot ignores group messages | Privacy Mode on, or bot not an admin with delete/ban rights |
+| Log says it will work in ANY chat | `ALLOWED_CHAT_IDS` empty — set your group id |
+| Spam not actioned; LLM errors (402/429) | Out of provider credits / rate limit — top up or switch `LLM_MODEL`; on failure the bot is fail-safe (no bans) |
+| No action reports | `ADMIN_CHAT_ID` not set |
+| Won't start, complains about variables | `BOT_TOKEN` missing (or `LLM_API_KEY` for non-heuristic backends) |
+| Can't reach Telegram/OpenRouter from the host | Needs outbound HTTPS; behind restrictions use a host-level outbound proxy |
+
 ## Management (in the bot's DM, admins only)
 
 | Command | Action |
