@@ -43,3 +43,9 @@ def test_defaults():
     assert cfg.classifier_backend == "openai_compat"
     assert cfg.bot_language == "en"
     assert cfg.llm_base_url.startswith("https://")
+    assert cfg.telegram_proxy == ""
+
+
+def test_telegram_proxy_from_env(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_PROXY", "socks5h://127.0.0.1:1080")
+    assert Config(_env_file=None).telegram_proxy == "socks5h://127.0.0.1:1080"

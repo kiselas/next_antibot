@@ -27,6 +27,10 @@ class Config(BaseSettings):
     admin_chat_id: int | None = None
     # Allowed chats. Empty = work everywhere (with a startup warning).
     allowed_chat_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
+    # Optional proxy for all Telegram API traffic (Bot API + long polling).
+    # Empty = direct connection. Examples: socks5h://user:pass@host:1080,
+    # http://host:8080. SOCKS support needs the `socks` extra (httpx[socks]).
+    telegram_proxy: str = ""
 
     # --- Classifier backend ---
     # One of: openai_compat | anthropic | ollama | heuristic

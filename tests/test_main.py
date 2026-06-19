@@ -59,3 +59,43 @@ async def test_heartbeat_write_failure():
     cfg = Config(_env_file=None).model_copy(update={"db_path": "/no_such_dir_xyz/sub/bot.db"})
     app = SimpleNamespace(bot_data={"config": cfg})
     await m._heartbeat(SimpleNamespace(application=app))  # OSError swallowed
+
+
+class _RecBuilder:
+    """Records chained ApplicationBuilder calls; build() returns a sentinel."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __getattr__(self, name):
+        def record(*args, **kwargs):
+            self.calls.append((name, args))
+            return self
+
+        return record
+
+    def build(self):
+        return "APP"
+
+
+def _use_rec_builder(monkeypatch):
+    rec = _RecBuilder()
+    monkeypatch.setattr(m.Application, "builder", staticmethod(lambda: rec))
+    return rec
+
+
+def test_build_application_applies_proxy(monkeypatch):
+    rec = _use_rec_builder(monkeypatch)
+    cfg = Config(_env_file=None).model_copy(
+        update={"bot_token": "1:A", "telegram_proxy": "socks5h://127.0.0.1:1080"}
+    )
+    assert m._build_application(cfg) == "APP"
+    proxy_calls = [args[0] for name, args in rec.calls if name in ("proxy", "get_updates_proxy")]
+    assert proxy_calls == ["socks5h://127.0.0.1:1080", "socks5h://127.0.0.1:1080"]
+
+
+def test_build_application_no_proxy(monkeypatch):
+    rec = _use_rec_builder(monkeypatch)
+    cfg = Config(_env_file=None).model_copy(update={"bot_token": "1:A"})
+    assert m._build_application(cfg) == "APP"
+    assert not [name for name, _ in rec.calls if name in ("proxy", "get_updates_proxy")]
